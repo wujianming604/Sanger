@@ -21,8 +21,6 @@ from email.utils import parseaddr
 import imaplib, email, os, poplib
 from email.parser import Parser
 from urllib.parse import quote
-import pytesseract.pytesseract
-from PIL import Image
 from pathlib import Path
 from icecream import ic
 import urllib.request
@@ -104,7 +102,7 @@ class Mysql:
 #获取系统里贝安臻和臻智选的所有先证者样本
 def getAllSample():
     lis = []
-    conn = pymssql.connect('47.101.134.95','nhwa','nhwaxxb2018', 'Gene',charset='utf8')
+    conn = pymssql.connect('47.101.134.95','whn','nyuen2018', 'Gene',charset='utf8')
     cursor = conn.cursor()
     cursor.execute("SELECT InfoId FROM dbo.J_SampleRegister WHERE  ProductType = 243 or ProductType = 249 ")
     allSampleNames = cursor.fetchall()
@@ -121,13 +119,13 @@ def getAllSample():
 # 309 数据重分析完成
 # 323 Sanger已返回
 def update_bioAnaState(sampleName):
-    conn = pymssql.connect('47.101.134.95','nhwa','nhwaxxb2018', 'Gene',charset='utf8')
+    conn = pymssql.connect('47.101.134.95','whn','nyuen2018', 'Gene',charset='utf8')
     cursor = conn.cursor()
     cursor.execute("SELECT inner_state FROM sample_product_receive WHERE sample_num='{}'".format(sampleName))
     state = cursor.fetchone()[0]
     #如果报告生成完成，就不需要更新状态20230605
     if state != 217:
-        cursor.execute("UPDATE sample_product_receive set inner_state=323 WHERE sample_num='{}' and ( product_type = 243 or product_type = 249 ) and product not in ('抗癫痫药物分析','核型分析 x1','核型分析 x2','假肥大性肌营养不良(MLPA)','验证与分析','腓骨肌萎缩症1型(MLPA)','线粒体基因组','共济失调综合(TP-PCR)','SMA/脊髓性肌萎缩症(MLPA)')".format(sampleName))
+        cursor.execute("UPDATE sample_product_receive set inner_state=323 WHERE sample_num='{}' and ( product_type = 243 or product_type = 249 ) and product != '{}'".format(sampleName,'抗癫痫药物分析'))
     #设置线粒体
         conn.commit()
     conn.close()
@@ -338,7 +336,7 @@ def analysisSanger(rawSampleName, zipFile):
                         os.system(f"cp {i} .")
                     chromId = row['chrom'].replace("chr","")
                     #考虑有-的情况
-                    if ('-' in row['pos'] or '_' in row['pos']) and len([i for i in re.split('[-_]',row['pos']) if i]) != 1:  #FrameShift
+                    if '-' in row['pos'] or '_' in row['pos']:  #FrameShift
                         for posId in re.split('[-_]',row['pos']):
                             #posId = int(re.split('[-_]',row['pos'])[0])
                             upStart = int(posId) - 20  #往前截取30bp
@@ -351,7 +349,7 @@ def analysisSanger(rawSampleName, zipFile):
                             downSeq = bio_function.extract_fa(str(chromId),str(downStart),str(downEnd)).upper()
                             print("downSeq:",downSeq,"长度",len(downSeq),flush=True)
                             sampleAb1 = row['ab1Name']
-                            if row['gene'] == "" or type(row['gene']) == float:
+                            if row['gene'] == "":
                                 geneName = "NA"
                             else:
                                 geneName = row['gene']
@@ -370,28 +368,15 @@ def analysisSanger(rawSampleName, zipFile):
                             logging.info("开始Sanger截图...")
                             os.system("/usr/bin/Rscript /share_data/wujm/Config/script/clinepilepsy/plot_by_sangerseqR-copy.R %s %s %s %s" % (sampleAb1,tmpName,upSeq,downSeq))
                             #判断文件大小
-                            image1 = Image.open(tmpName)
-                            str1 = pytesseract.image_to_string(image1)
-                            num = len(str1.strip().replace(" ",""))   #图像识别， 120为cutoff
-                            # if os.path.getsize(tmpName) < 180000:
-                            #     os.system("mv {} {}".format(tmpName, pngName))
-                            # elif os.path.getsize(tmpName) > 180000:
-                            #     os.system("rm {}".format(tmpName))
-                            # else:
-                            #     pass
-                            #判断图像识别后文字的数据， 成功[0~87], 失败[165~601]
-                            if num <= 120:
+                            if os.path.getsize(tmpName) < 190000:
                                 os.system("mv {} {}".format(tmpName, pngName))
-                            elif num > 120:
-                                print("{}图片，识别失败，请注意！！！！！".format(tmpName))
+                            elif os.path.getsize(tmpName) > 190000:
                                 os.system("rm {}".format(tmpName))
                             else:
                                 pass
                     else:
-                        if '-' in row['pos']:
-                            posId = row['pos'].replace('-','')
-                        else:
-                            posId = row['pos']
+                        posId = row['pos']
+
                         upStart = int(posId) - 20  #往前截取30bp
                         upEnd = int(posId) - 1
                         downStart = int(posId) + 1
@@ -402,8 +387,7 @@ def analysisSanger(rawSampleName, zipFile):
                         downSeq = bio_function.extract_fa(str(chromId),str(downStart),str(downEnd)).upper()
                         print("downSeq:",downSeq,"长度",len(downSeq),flush=True)
                         sampleAb1 = row['ab1Name']
-                        print(row['gene'],type(row['gene']),flush=True)
-                        if row['gene'] == "" or type(row['gene']) == float:
+                        if row['gene'] == "":
                             geneName = "NA"
                         else:
                             geneName = row['gene']
@@ -435,9 +419,9 @@ def analysisSanger(rawSampleName, zipFile):
                             os.system("cp %s %s" % (i, sampleIdPath))
                         ab1AboPath = allResultPath+sampleId+'/'+sampleAb1
                         newPngAboPath = allResultPath+sampleId+'/'+pngName
-                        if sampleId in allSampleList:
-                            updateZZXjindubiao(sampleId)  #更新臻智选sanger返回时间
-                            update_bioAnaState(sampleId)  #更新sanger返回状态
+                        #if sampleId in allSampleList:
+                            #updateZZXjindubiao(sampleId)  #更新臻智选sanger返回时间
+                            #update_bioAnaState(sampleId)  #更新sanger返回状态
                     else:
                         logging.info("'{}'-的家系信息为{}".format(sampleId,sampleDict[sampleId]))
                         sampleIdPath = allResultPath + sampleDict[sampleId]
@@ -446,27 +430,25 @@ def analysisSanger(rawSampleName, zipFile):
                         else:
                             pass
                         #模糊匹配
-                        localSampleList = glob.glob('*%s*[ab1,png]' % sampleId)
-                        logging.info("Sanger截图完毕，开始截图结果拷贝至sangerResult目录...")
-                        for i in localSampleList:
-                            os.system("cp %s %s" % (i, sampleIdPath))
-                        ab1AboPath = allResultPath+sampleDict[sampleId]+'/'+sampleAb1
-                        newPngAboPath = allResultPath+sampleDict[sampleId]+'/'+pngName
-                        os.system("chmod 777 %s" % allResultPath+sampleDict[sampleId])
-                        os.system("chmod -R 777  %s/*" % allResultPath+sampleDict[sampleId])
-                        if sampleId in allSampleList:
-                            updateBAZjindubiao(sampleId)  #更新贝安臻sanger返回时间
-                            update_bioAnaState(sampleId)  #更新sanger返回状态
+                        # localSampleList = glob.glob('*%s*[ab1,png]' % sampleId)
+                        # logging.info("Sanger截图完毕，开始截图结果拷贝至sangerResult目录...")
+                        # for i in localSampleList:
+                        #     os.system("cp %s %s" % (i, sampleIdPath))
+                        # ab1AboPath = allResultPath+sampleDict[sampleId]+'/'+sampleAb1
+                        # newPngAboPath = allResultPath+sampleDict[sampleId]+'/'+pngName
+                        #if sampleId in allSampleList:
+                        #    updateBAZjindubiao(sampleId)  #更新贝安臻sanger返回时间
+                        #    update_bioAnaState(sampleId)  #更新sanger返回状态
                     #resultList.append(str(sampleId)+','+chromId+','+str(posId)+','+row['geneType']+','+ab1AboPath+','+newPngAboPath)
-                    print(str(sampleId)+','+geneName+','+row['area']+','+row['geneType']+','+ab1AboPath+','+newPngAboPath)
+                    #print(str(sampleId)+','+geneName+','+row['area']+','+row['geneType']+','+ab1AboPath+','+newPngAboPath)
                     
-                    resultList.append(str(sampleId)+','+geneName+','+row['area']+','+row['geneType']+','+ab1AboPath+','+newPngAboPath)
-                    status = 1
+                    #resultList.append(str(sampleId)+','+geneName+','+row['area']+','+row['geneType']+','+ab1AboPath+','+newPngAboPath)
+                    #status = 1
                 #os.system("chmod 777 %s" % allResultPath)
                 #os.system("chmod -R 777  %s/*" % allResultPath)
             
             #进行数据库更新
-            updateSangersamples(resultList)
+            #updateSangersamples(resultList)
             return status
 
 
@@ -556,7 +538,7 @@ def getUrl(urlName, newSampleName):
             
             
 def parserStr(content):
-    adjunct = re.findall(r'<li><a href=\"(.*)\">2024', content)
+    adjunct = re.findall(r'<li><a href=\"(.*)\">2023', content)
     if adjunct:
         for each in adjunct:
             #替换里面的字符串

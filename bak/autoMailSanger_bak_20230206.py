@@ -6,14 +6,7 @@
 # content: 替换压缩包目录
 # update: 20220701
 # content: pathlib搜索目录里面的ab1文件
-# update: 20230206
-# content: 修改chrom和pos列 为基因和检测区域
-# update: 20230217
-# content: 修改png图片名称
-# update: 20230516
-# content: 添加sanger返回时间 , 以png图片为准（同时，只有先证者的数据有，才会更新）
-# update: 20230525
-# content: 兼容[检测区域]里面，有- or _的情况
+
 
 from email.header import decode_header
 from html.parser import HTMLParser
@@ -21,14 +14,11 @@ from email.utils import parseaddr
 import imaplib, email, os, poplib
 from email.parser import Parser
 from urllib.parse import quote
-import pytesseract.pytesseract
-from PIL import Image
 from pathlib import Path
 from icecream import ic
 import urllib.request
 import pandas as pd
 import pysnooper
-import pymssql
 import logging
 import random
 import zipfile
@@ -62,7 +52,6 @@ except Exception as import_error:
 logFormat = "%(asctime)s - %(levelname)s - %(message)s"
 logging.basicConfig(filename='run.log', level=logging.DEBUG, format=logFormat)
 nowTime = time.strftime("%Y-%m-%d", time.localtime())
-
 ##基本配置
 email = "wujianming@nhwa-group.com"
 password = "benmeiZHANYUE604"
@@ -100,53 +89,7 @@ class Mysql:
             logging.error('运行sql命令问题:\n%s' % sql_cmd)
             logging.error(run_error)
             sys.exit()
-
-#获取系统里贝安臻和臻智选的所有先证者样本
-def getAllSample():
-    lis = []
-    conn = pymssql.connect('47.101.134.95','nhwa','nhwaxxb2018', 'Gene',charset='utf8')
-    cursor = conn.cursor()
-    cursor.execute("SELECT InfoId FROM dbo.J_SampleRegister WHERE  ProductType = 243 or ProductType = 249 ")
-    allSampleNames = cursor.fetchall()
-    for i in allSampleNames:
-        lis.append(i[0].strip())
-    conn.close()
-
-    return lis
-
-#更新Sanger已返回 状态
-# 215：计算分析完成；
-# 216：报告生成中
-# 217：报告生成完成
-# 309 数据重分析完成
-# 323 Sanger已返回
-def update_bioAnaState(sampleName):
-    conn = pymssql.connect('47.101.134.95','nhwa','nhwaxxb2018', 'Gene',charset='utf8')
-    cursor = conn.cursor()
-    cursor.execute("SELECT inner_state FROM sample_product_receive WHERE sample_num='{}'".format(sampleName))
-    state = cursor.fetchone()[0]
-    #如果报告生成完成，就不需要更新状态20230605
-    if state != 217:
-        cursor.execute("UPDATE sample_product_receive set inner_state=323 WHERE sample_num='{}' and ( product_type = 243 or product_type = 249 ) and product not in ('抗癫痫药物分析','核型分析 x1','核型分析 x2','假肥大性肌营养不良(MLPA)','验证与分析','腓骨肌萎缩症1型(MLPA)','线粒体基因组','共济失调综合(TP-PCR)','SMA/脊髓性肌萎缩症(MLPA)')".format(sampleName))
-    #设置线粒体
-        conn.commit()
-    conn.close()
-
-#更新Sanger已返回的时间
-def updateBAZjindubiao(sampleName):
-    conn2 = pymysql.connect('192.168.99.7', 'wujm','wjM123456++', 'clinepilepsy_pipeline',charset='utf8')
-    cursor = conn2.cursor()
-    cursor.execute("update Genetic_Counseling_processanalysis set sanger_complete_time='{}' where sample_name='{}';".format(nowTime, sampleName))
-    conn2.commit()
-    conn2.close()
-
-def updateZZXjindubiao(sampleName):
-    conn2 = pymysql.connect('192.168.99.7', 'wujm','wjM123456++', 'clinepilepsy_pipeline',charset='utf8')
-    cursor = conn2.cursor()
-    cursor.execute("update Genetic_Counseling_zzxprocessanalysis set sanger_complete_time='{}' where sample_name='{}';".format(nowTime, sampleName))
-    conn2.commit()
-    conn2.close()
-
+            
 #获取亲属及患者的样本编号
 def get_dict():
     sampleDict = {}# 从300例之后开始
@@ -163,7 +106,7 @@ def get_dict():
             logging.warning("%s-这个家系没有父母样本" % each[2])
             sampleDict[each[2]] = each[0]+'_'+each[1]+'_'+each[2]
         else:
-            #print(each)
+            print(each)
             sampleDict[each[2]] = each[0]+'_'+each[1]+'_'+each[2]
             for jias in re.split("[,，]",each[-1].strip()):
                 jias = re.split("[:：]",jias.strip())
@@ -254,15 +197,14 @@ def updateSangersamples(List):
     for each in List:
         sampleName, chrom, pos, GT, ab1File, ab1Png = each.split(',')
         #判断sampleName，chrom, pos，GT是否存在，如果存在，更新
-        if (sampleName, chrom, pos, GT) in allSampleNames:
+        if (sampleName, chrom, int(pos), GT) in allSampleNames:
             #update
             update_cmd = "update Sanger_sangersamples set abiFileUrl='{abiFile}', abiPngUrl='{abiPng}', update_time='{updateTime}'  where sampleName='{name}' and chrom='{chr}' and pos={pos} and genoType='{gt}';".format(abiFile=ab1File,abiPng=ab1Png,updateTime=nowTime, name=sampleName, chr=chrom, pos=pos, gt=GT)
             my_obj.run_cmd(my_cur, update_cmd)
             my_con.commit()
         else:
             #insert
-            print("insert into Sanger_sangersamples (sampleName, chrom, pos, genoType, abiFileUrl, abiPngUrl, created_time, update_time) values ('{sample}','{chr}',{pos},'{gt}','{abiFile}','{abiPng}','{createTime}','{updateTime}');".format(sample=sampleName,chr=chrom,pos=pos,gt=GT,abiFile=ab1File,abiPng=ab1Png,createTime=nowTime, updateTime=nowTime))
-            insert_cmd = "insert into Sanger_sangersamples (sampleName, chrom, pos, genoType, abiFileUrl, abiPngUrl, created_time, update_time) values ('{sample}','{chr}','{pos}','{gt}','{abiFile}','{abiPng}','{createTime}','{updateTime}');".format(sample=sampleName,chr=chrom,pos=pos,gt=GT,abiFile=ab1File,abiPng=ab1Png,createTime=nowTime, updateTime=nowTime)
+            insert_cmd = "insert into Sanger_sangersamples (sampleName, chrom, pos, genoType, abiFileUrl, abiPngUrl, created_time, update_time) values ('{sample}','{chr}',{pos},'{gt}','{abiFile}','{abiPng}','{createTime}','{updateTime}');".format(sample=sampleName,chr=chrom,pos=pos,gt=GT,abiFile=ab1File,abiPng=ab1Png,createTime=nowTime, updateTime=nowTime)
             my_obj.run_cmd(my_cur, insert_cmd)
             my_con.commit()
     my_con.close()
@@ -275,7 +217,6 @@ def updateSangersamples(List):
 def analysisSanger(rawSampleName, zipFile):
     status = 0
     sampleDict = get_dict()
-    allSampleList = getAllSample()
     #不管是Django上传，压缩包存放在下面目录
     #defaultPath = "/share_data/wujm/project/Django/Project/uploadSanger"
     #程序自动识别邮箱并下载，压缩包存放在下面目录
@@ -326,100 +267,37 @@ def analysisSanger(rawSampleName, zipFile):
                 data['pos'].replace('[A-Z]|[a-z]|>','',regex=True,inplace=True)
                 data['geneType'] = data['突变类型']
                 data['ab1Name'] = data['峰图文件']
-                #data['gene'] = data['检测位点']
-                data['gene'] = data['基因']
+                data['gene'] = data['检测位点']
                 data['fangx'] = data['测序方向']
-                data['area'] = data['检测区域']
-                sampleInfos = data[["sampleId","chrom","pos","geneType","ab1Name","gene","fangx","area"]]
+                sampleInfos = data[["sampleId","chrom","pos","geneType","ab1Name","gene","fangx"]]
                 for index, row in sampleInfos.iterrows():
                     sampleId = row['sampleId']
                     #update20220701 ,用p.rglob找到ab1文件,复制到当前目录下
                     for i in p.rglob(row['ab1Name']):
                         os.system(f"cp {i} .")
                     chromId = row['chrom'].replace("chr","")
-                    #考虑有-的情况
-                    if ('-' in row['pos'] or '_' in row['pos']) and len([i for i in re.split('[-_]',row['pos']) if i]) != 1:  #FrameShift
-                        for posId in re.split('[-_]',row['pos']):
-                            #posId = int(re.split('[-_]',row['pos'])[0])
-                            upStart = int(posId) - 20  #往前截取30bp
-                            upEnd = int(posId) - 1
-                            downStart = int(posId) + 1
-                            downEnd = int(posId) + 20  #往后截取30bp
-                            #获取snp位点前后30bp碱基序列
-                            upSeq = bio_function.extract_fa(str(chromId),str(upStart),str(upEnd)).upper()
-                            print("upSeq:",upSeq,"长度",len(upSeq),flush=True)
-                            downSeq = bio_function.extract_fa(str(chromId),str(downStart),str(downEnd)).upper()
-                            print("downSeq:",downSeq,"长度",len(downSeq),flush=True)
-                            sampleAb1 = row['ab1Name']
-                            if row['gene'] == "" or type(row['gene']) == float:
-                                geneName = "NA"
-                            else:
-                                geneName = row['gene']
-                            ic("正在分析{}-{}。".format(sampleId, row['geneType']))
-                            #将ab1文件名前缀作为图片的name
-                            #rawName = os.path.splitext(sampleAb1)[0].split("-")
-                            #pngName = sampleId + '_' + row['gene'] + '_' + fangx + '.png'
-                            #更新图片的命名方式20230217
-                            pngName = sampleId + '_' + geneName + '_' + row['area'] + '.png'
-                            pngName = pngName.replace(":","_").replace(">","_")
-
-                            tmpName = sampleId + '_' + geneName + '_' + row['area'] + str(posId)+ '.png'
-                            #定位sample_id 对应的ab1文件
-                            logging.info("'ab1':'{}'--'png':'{}'--'upSeq':'{}'--'downSeq':{}.".format(sampleAb1,pngName,upSeq,downSeq))
-                            #运行程序
-                            logging.info("开始Sanger截图...")
-                            os.system("/usr/bin/Rscript /share_data/wujm/Config/script/clinepilepsy/plot_by_sangerseqR-copy.R %s %s %s %s" % (sampleAb1,tmpName,upSeq,downSeq))
-                            #判断文件大小
-                            image1 = Image.open(tmpName)
-                            str1 = pytesseract.image_to_string(image1)
-                            num = len(str1.strip().replace(" ",""))   #图像识别， 120为cutoff
-                            # if os.path.getsize(tmpName) < 180000:
-                            #     os.system("mv {} {}".format(tmpName, pngName))
-                            # elif os.path.getsize(tmpName) > 180000:
-                            #     os.system("rm {}".format(tmpName))
-                            # else:
-                            #     pass
-                            #判断图像识别后文字的数据， 成功[0~87], 失败[165~601]
-                            if num <= 120:
-                                os.system("mv {} {}".format(tmpName, pngName))
-                            elif num > 120:
-                                print("{}图片，识别失败，请注意！！！！！".format(tmpName))
-                                os.system("rm {}".format(tmpName))
-                            else:
-                                pass
+                    posId = row['pos']
+                    if row['fangx'] == "正向":
+                        fangx = "F"
                     else:
-                        if '-' in row['pos']:
-                            posId = row['pos'].replace('-','')
-                        else:
-                            posId = row['pos']
-                        upStart = int(posId) - 20  #往前截取30bp
-                        upEnd = int(posId) - 1
-                        downStart = int(posId) + 1
-                        downEnd = int(posId) + 20  #往后截取30bp
-                        #获取snp位点前后30bp碱基序列
-                        upSeq = bio_function.extract_fa(str(chromId),str(upStart),str(upEnd)).upper()
-                        print("upSeq:",upSeq,"长度",len(upSeq),flush=True)
-                        downSeq = bio_function.extract_fa(str(chromId),str(downStart),str(downEnd)).upper()
-                        print("downSeq:",downSeq,"长度",len(downSeq),flush=True)
-                        sampleAb1 = row['ab1Name']
-                        print(row['gene'],type(row['gene']),flush=True)
-                        if row['gene'] == "" or type(row['gene']) == float:
-                            geneName = "NA"
-                        else:
-                            geneName = row['gene']
-                        ic("正在分析{}-{}。".format(sampleId, row['geneType']))
-                        #将ab1文件名前缀作为图片的name
-                        #rawName = os.path.splitext(sampleAb1)[0].split("-")
-                        #pngName = sampleId + '_' + row['gene'] + '_' + fangx + '.png'
-                        #更新图片的命名方式20230217
-                        pngName = sampleId + '_' + geneName + '_' + row['area'] + '.png'
-                        pngName = pngName.replace(":","_").replace(">","_")
-                        #定位sample_id 对应的ab1文件
-                        logging.info("'ab1':'{}'--'png':'{}'--'upSeq':'{}'--'downSeq':{}.".format(sampleAb1,pngName,upSeq,downSeq))
-                        #运行程序
-                        logging.info("开始Sanger截图...")
-                        os.system("/usr/bin/Rscript /share_data/wujm/Config/script/clinepilepsy/plot_by_sangerseqR-copy.R %s %s %s %s" % (sampleAb1,pngName,upSeq,downSeq))
-                    #print("/usr/bin/Rscript /share_data/wujm/Config/script/clinepilepsy/plot_by_sangerseqR-copy.R %s %s %s %s" % (sampleAb1,pngName,upSeq,downSeq))
+                        fangx = "R"
+                    upStart = int(posId) - 20  #往前截取30bp
+                    upEnd = int(posId) - 1
+                    downStart = int(posId) + 1
+                    downEnd = int(posId) + 20  #往后截取30bp
+                    #获取snp位点前后30bp碱基序列
+                    upSeq = bio_function.extract_fa(str(chromId),str(upStart),str(upEnd)).upper()
+                    downSeq = bio_function.extract_fa(str(chromId),str(downStart),str(downEnd)).upper()
+                    sampleAb1 = row['ab1Name']
+                    ic("正在分析{}-{}。".format(sampleId, row['geneType']))
+                    #将ab1文件名前缀作为图片的name
+                    #rawName = os.path.splitext(sampleAb1)[0].split("-")
+                    pngName = sampleId + '_' + row['gene'] + '_' + fangx + '.png'
+                    #定位sample_id 对应的ab1文件
+                    logging.info("'ab1':'{}'--'png':'{}'--'upSeq':'{}'--'downSeq':{}.".format(sampleAb1,pngName,upSeq,downSeq))
+                    #运行程序
+                    logging.info("开始Sanger截图...")
+                    os.system("/usr/bin/Rscript /share_data/wujm/Config/script/clinepilepsy/plot_by_sangerseqR-copy.R %s %s %s %s" % (sampleAb1,pngName,upSeq,downSeq))
                     #程序运行结束之后，将sampleId相关的文件全放到同一个sampleId目录下,非贝安臻样本直接新建样本名目录
                     if sampleId not in sampleDict:
                         logging.warning("{} 不在数据库里面，可能是臻智选样本还是研发样本。".format(sampleId))
@@ -435,9 +313,6 @@ def analysisSanger(rawSampleName, zipFile):
                             os.system("cp %s %s" % (i, sampleIdPath))
                         ab1AboPath = allResultPath+sampleId+'/'+sampleAb1
                         newPngAboPath = allResultPath+sampleId+'/'+pngName
-                        if sampleId in allSampleList:
-                            updateZZXjindubiao(sampleId)  #更新臻智选sanger返回时间
-                            update_bioAnaState(sampleId)  #更新sanger返回状态
                     else:
                         logging.info("'{}'-的家系信息为{}".format(sampleId,sampleDict[sampleId]))
                         sampleIdPath = allResultPath + sampleDict[sampleId]
@@ -452,18 +327,10 @@ def analysisSanger(rawSampleName, zipFile):
                             os.system("cp %s %s" % (i, sampleIdPath))
                         ab1AboPath = allResultPath+sampleDict[sampleId]+'/'+sampleAb1
                         newPngAboPath = allResultPath+sampleDict[sampleId]+'/'+pngName
-                        os.system("chmod 777 %s" % allResultPath+sampleDict[sampleId])
-                        os.system("chmod -R 777  %s/*" % allResultPath+sampleDict[sampleId])
-                        if sampleId in allSampleList:
-                            updateBAZjindubiao(sampleId)  #更新贝安臻sanger返回时间
-                            update_bioAnaState(sampleId)  #更新sanger返回状态
-                    #resultList.append(str(sampleId)+','+chromId+','+str(posId)+','+row['geneType']+','+ab1AboPath+','+newPngAboPath)
-                    print(str(sampleId)+','+geneName+','+row['area']+','+row['geneType']+','+ab1AboPath+','+newPngAboPath)
-                    
-                    resultList.append(str(sampleId)+','+geneName+','+row['area']+','+row['geneType']+','+ab1AboPath+','+newPngAboPath)
+                    resultList.append(str(sampleId)+','+chromId+','+str(posId)+','+row['geneType']+','+ab1AboPath+','+newPngAboPath)
                     status = 1
-                #os.system("chmod 777 %s" % allResultPath)
-                #os.system("chmod -R 777  %s/*" % allResultPath)
+                os.system("chmod 777 %s" % allResultPath)
+                os.system("chmod -R 777  %s/*" % allResultPath)
             
             #进行数据库更新
             updateSangersamples(resultList)
@@ -556,7 +423,7 @@ def getUrl(urlName, newSampleName):
             
             
 def parserStr(content):
-    adjunct = re.findall(r'<li><a href=\"(.*)\">2024', content)
+    adjunct = re.findall(r'<li><a href=\"(.*)\">2023', content)
     if adjunct:
         for each in adjunct:
             #替换里面的字符串
@@ -623,7 +490,6 @@ def run():
 #先分析本地的
 os.chdir("/share_data/clin_result/clin_epilepsy_result/Sanger")
 localZips = glob.glob('*.zip')
-print(localZips)
 
 for localSample in localZips:
     logging.warning("在本地，有需要分析的zip文件----{}".format(localSample))
